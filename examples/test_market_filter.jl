@@ -1,6 +1,6 @@
 
-using FutuAPI.MarketFilter
-using FutuAPI.Constants
+using Futu
+import Futu.Constants
 
 # Example 1: Basic filtering by market cap and PE
 filters = [

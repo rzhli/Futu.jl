@@ -1,6 +1,6 @@
 using Revise
-using FutuAPI, Dates, DataFrames
-import FutuAPI.Constants
+using Futu, Dates, DataFrames
+import Futu.Constants
 
 # Set RSA private key path via environment variable
 # Example: export FUTU_RSA_KEY_PATH="/path/to/your/private.pem"

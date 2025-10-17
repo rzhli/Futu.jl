@@ -1,7 +1,7 @@
 using Revise
-using FutuAPI
-import FutuAPI.Constants
-import FutuAPI.Display
+using Futu
+import Futu.Constants
+import Futu.Display
 using Dates
 
 rsa_key_path = get(ENV, "FUTU_RSA_KEY_PATH", joinpath(homedir(), ".futu", "private.pem"))

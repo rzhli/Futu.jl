@@ -1,4 +1,4 @@
-# FutuAPI.jl
+# Futu.jl
 
 A comprehensive Julia SDK for Futu OpenAPI, providing complete access to market data, trading functions, and real-time subscriptions. This SDK implements the full Futu OpenAPI protocol with support for Hong Kong, US, China A-shares, and other markets.
 
@@ -75,7 +75,7 @@ Pkg.develop(path="/path/to/FutuAPI")
 ## Quick Start
 
 ```julia
-using FutuAPI
+using Futu
 
 # Set RSA key path (optional but recommended)
 rsa_key_path = get(ENV, "FUTU_RSA_KEY_PATH", joinpath(homedir(), ".futu", "private.pem"))
@@ -636,9 +636,9 @@ include("test/test_quote.jl")
 try
     result = get_market_snapshot(client, ["00700"])
 catch e
-    if isa(e, FutuAPI.Errors.ConnectionError)
+    if isa(e, Futu.Errors.ConnectionError)
         println("Connection error: ", e.message)
-    elseif isa(e, FutuAPI.Errors.APIError)
+    elseif isa(e, Futu.Errors.APIError)
         println("API error: ", e.code, " - ", e.message)
     else
         rethrow(e)
@@ -679,7 +679,7 @@ MIT License - see LICENSE file for details
 ## Support
 
 - **Official Futu OpenAPI Documentation**: https://openapi.futunn.com/futu-api-doc/
-- **GitHub Issues**: https://github.com/rzhli/FutuAPI.jl/issues
+- **GitHub Issues**: https://github.com/rzhli/Futu.jl/issues
 
 ## Project Status
 

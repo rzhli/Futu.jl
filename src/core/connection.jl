@@ -625,7 +625,7 @@ function start_receive_task(conn::OpenDConnection)
                     resp = decode_response(packet.proto_id, packet.data)
 
                     if resp.retType != Int32(Common.RetType.Succeed)
-                        put!(result_chan, ResponseResult(false, nothing, FutuAPIError(resp.retType, resp.retMsg)))
+                        put!(result_chan, ResponseResult(false, nothing, FutuError(resp.retType, resp.retMsg)))
                     else
                         put!(result_chan, ResponseResult(true, resp, nothing))
                     end

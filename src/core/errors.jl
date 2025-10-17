@@ -1,14 +1,14 @@
 module Errors
 
-export FutuAPIError, ConnectionError, ProtocolError, QuoteError, TradeError
+export FutuError, ConnectionError, ProtocolError, QuoteError, TradeError
 
 # Base error type
-struct FutuAPIError <: Exception
+struct FutuError <: Exception
     code::Int
     message::String
 end
 
-Base.showerror(io::IO, e::FutuAPIError) = print(io, "FutuAPIError($(e.code)): $(e.message)")
+Base.showerror(io::IO, e::FutuError) = print(io, "FutuError($(e.code)): $(e.message)")
 
 # Connection related errors
 struct ConnectionError <: Exception

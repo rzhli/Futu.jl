@@ -1,4 +1,4 @@
-module FutuAPI
+module Futu
 
 # Core dependencies
 using Sockets
@@ -41,7 +41,7 @@ using .Display
 export
     # Types
     OpenDClient, TradeClient,
-    FutuAPIError, ConnectionError, ProtocolError, APIError,
+    FutuError, ConnectionError, ProtocolError, APIError,
 
     # Connection
     connect!, disconnect!, is_connected,

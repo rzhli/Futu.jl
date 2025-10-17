@@ -1,5 +1,5 @@
 using Revise
-using FutuAPI
+using Futu
 rsa_key_path = get(ENV, "FUTU_RSA_KEY_PATH", joinpath(homedir(), ".futu", "private.pem"))
 
 client = OpenDClient(rsa_private_key_path = rsa_key_path)

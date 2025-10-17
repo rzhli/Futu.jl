@@ -1,6 +1,6 @@
 using Revise
-using FutuAPI
-import FutuAPI.Display
+using Futu
+import Futu.Display
 using Dates
 
 # Set RSA private key path via environment variable
