@@ -50,9 +50,7 @@ A comprehensive Julia SDK for Futu OpenAPI, providing complete access to market 
 
 ```julia
 using Pkg
-
 # Clone and develop locally
-using Pkg
 Pkg.add("https://github.com/rzhli/Futu.jl.git")
 Pkg.develop(path="/path/to/Futu")
 ```
