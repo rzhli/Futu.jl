@@ -52,13 +52,15 @@ A comprehensive Julia SDK for Futu OpenAPI, providing complete access to market 
 using Pkg
 
 # Clone and develop locally
-Pkg.develop(path="/path/to/FutuAPI")
+using Pkg
+Pkg.add("https://github.com/rzhli/Futu.jl.git")
+Pkg.develop(path="/path/to/Futu")
 ```
 
 ## Prerequisites
 
 1. **Futu OpenD Gateway**: Download and run Futu OpenD
-   - Download from: https://www.futunn.com/download/OpenAPI
+   - Download from: https://openapi.futunn.com/futu-api-doc/opend/opend-cmd.html
    - Default connection: `127.0.0.1:11111`
 
 2. **Trading Account**:
