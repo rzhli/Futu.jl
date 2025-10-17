@@ -1,0 +1,39 @@
+name = "FutuAPI"
+uuid = "a1b2c3d4-5678-9012-3456-789012345678"
+authors = ["FutuAPI Contributors"]
+version = "0.1.0"
+
+[deps]
+Base64 = "2a0f44e3-6c83-55bd-87e4-b1978d98bd5f"
+Crayons = "a8cc5b0e-0ffa-5ad4-8c14-923d3ee1735f"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+MD5 = "6ac74813-4b46-53a4-afec-0b5dc9d7885c"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+ProtoBuf = "3349acd9-ac6a-5e09-bcdb-63829b23a429"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
+Sockets = "6462fe0b-24de-5631-8697-dd941f90decc"
+Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
+
+[compat]
+Crayons = "4.1.1"
+DataFrames = "1"
+HTTP = "1"
+JSON3 = "1.12"
+MD5 = "0.2"
+Printf = "1.6"
+ProtoBuf = "1"
+Revise = "3"
+SHA = "0.7"
+Unicode = "1.6"
+julia = "1.10"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
