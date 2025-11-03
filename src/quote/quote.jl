@@ -48,7 +48,7 @@ export
 # ============================= 订阅 =============================
 # Subscribe to market data
 function subscribe(client::OpenDClient, codes::Vector{String}, sub_types::Vector{SubType.T}; market::QotMarket.T = QotMarket.HK_Security, is_sub::Bool = true)
-    securities = [Qot_Common.Security(Int(market), code) for code in codes]
+    securities = [Qot_Common.Security(Int32(market), code) for code in codes]
     sub_type_list = Int32[Int(st) for st in sub_types]
     c2s = Qot_Sub.C2S(
         securityList = securities,
@@ -80,37 +80,74 @@ end
 # ============================== 推送回调 ===============================
 
 """
-    update_quote(client, codes, sub_type, callback; market = QotMarket.HK_Security, is_sub = true)
+    update_quote(client, codes, sub_type, callback; is_sub = true)
 
 Subscribe or unsubscribe to real-time data pushes for the given `codes` and register/unregister a callback.
 
 - `client`: Active `OpenDClient`
-- `codes`: Vector of stock symbols
+- `codes`: Vector of stock symbols in "MARKET.NUMBER" format (e.g., "SH.601019", "SZ.000100", "HK.00700")
 - `sub_type`: The `SubType` to subscribe to (e.g., `SubType.Basic`, `SubType.Ticker`)
 - `callback`: Function invoked with parsed push payload. For unsubscription, can be `nothing` to keep callback registered.
-- `market`: Optional market enum (defaults to `QotMarket.HK_Security`)
 - `is_sub`: `true` to subscribe and register_callback, `false` to unsubscribe and unregister_callback
+
+The function automatically detects the market from each code and groups them for batch subscription.
 """
-function update_quote(client::OpenDClient, codes::Vector{String}, sub_type::SubType.T, callback::Union{Function, Nothing}; market::QotMarket.T = QotMarket.HK_Security, is_sub::Bool = true)
+function update_quote(client::OpenDClient, codes::Vector{String}, sub_type::SubType.T, callback::Union{Function, Nothing}; is_sub::Bool = true)
     proto_id = get(SUBTYPE_TO_PROTOID, sub_type, nothing)
 
-    result = subscribe(client, codes, SubType.T[sub_type]; market = market, is_sub = is_sub)
+    # 按市场分组股票代码
+    market_groups = Dict{QotMarket.T, Vector{String}}()
 
-    if is_sub
-        if result.ret_type == :Succeed
-            if callback !== nothing
-                register_callback(client.callbacks, UInt32(proto_id), callback)
-            end
+    for code in codes
+        # 解析市场前缀（支持 "SH.601019" 或 "sh.601019" 格式）
+        parts = split(code, ".")
+        market_str = uppercase(String(parts[1]))  # 市场前缀
+        pure_code = String(parts[2])  
+
+        market = if market_str == "SH"
+            QotMarket.CNSH_Security
+        elseif market_str == "SZ"
+            QotMarket.CNSZ_Security
+        elseif market_str == "HK"
+            QotMarket.HK_Security
         else
-            @warn "Subscription to quote updates failed" sub_type=sub_type ret_type=result.ret_type err_code=result.err_code ret_msg=result.ret_msg
+            @warn "Unknown market prefix in code: $code, defaulting to HK"
+            QotMarket.HK_Security
+        end
+
+        # 将纯代码添加到对应市场的组
+        if !haskey(market_groups, market)
+            market_groups[market] = String[]
+        end
+        push!(market_groups[market], pure_code)
+    end
+
+    # 对每个市场分别订阅
+    results = []
+    for (market, pure_codes) in market_groups
+        result = subscribe(client, pure_codes, SubType.T[sub_type]; market = market, is_sub = is_sub)
+        push!(results, result)
+
+        if is_sub
+            if result.ret_type != :Succeed
+                @warn "Subscription failed for market $(market)" sub_type=sub_type ret_type=result.ret_type err_code=result.err_code ret_msg=result.ret_msg
+            end
+        end
+    end
+
+    # 注册/注销回调（只需注册一次，所有市场共用）
+    if is_sub
+        if any(r.ret_type == :Succeed for r in results) && callback !== nothing
+            register_callback(client.callbacks, UInt32(proto_id), callback)
         end
     else # Unsubscribe
         if callback !== nothing
             unregister_callback(client.callbacks, callback)
         end
     end
-    
-    return result
+
+    # 返回第一个结果（或者可以返回所有结果）
+    return results
 end
 
 # ================================ 拉取 ==================================
@@ -847,7 +884,13 @@ function get_history_kline(client::OpenDClient, code::String;
     )
     security = Qot_Common.Security(Int(market), code)
 
-    begin_time = begin_time === nothing ? end_time - Day(29) : begin_time
+    if begin_time === nothing
+        if max_count !== nothing
+            begin_time = end_time - Day(ceil(Int, max_count * 1.5))
+        else
+            error("Either begin_time or max_count must be provided")
+        end
+    end
 
     begin_str = Dates.format(begin_time, dateformat"yyyy-mm-dd")
     end_str = Dates.format(end_time, dateformat"yyyy-mm-dd")
@@ -879,8 +922,8 @@ function get_history_kline(client::OpenDClient, code::String;
             turnover = item.turnover,
             turnover_rate = item.turnoverRate,
             pe = item.pe,
-            change_rate = item.changeRate
-        ))
+            change_rate = item.changeRate)
+        )
     end
 
     return (

@@ -504,8 +504,8 @@ end
 end
 
 mutable struct Security
-    market::Int32
-    code::String
+    market::Int32           # 市场前缀
+    code::String            # 仅含代码
 end
 Security(market::Integer, code::AbstractString) = Security(Int32(market), String(code))
 Security(; market::Integer = 0, code::AbstractString = "") = Security(Int32(market), String(code))
