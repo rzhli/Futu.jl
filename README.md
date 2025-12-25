@@ -683,7 +683,7 @@ MIT License - see LICENSE file for details
 
 ## Project Status
 
-Current Version: **v0.1.0** (Active Development)
+Current Version: **v0.2.0** 
 
 ### Implemented ✅
 - Complete client connection with RSA encryption
