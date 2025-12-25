@@ -1143,8 +1143,9 @@ module Trade
             finra_taf = 0.0
             other_fees = 0.0
 
-            # Parse fee list
-            fee_details = []
+            # Parse fee list - use NamedTuple for type stability
+            FeeDetail = @NamedTuple{name::String, value::Float64, currency::String}
+            fee_details = FeeDetail[]
             fee_currency = ""
 
             if !isempty(order_fee.feeList)
@@ -1152,7 +1153,7 @@ module Trade
                     fee_name = fee_item.title
                     fee_value = fee_item.value
 
-                    push!(fee_details, Dict("name" => fee_name, "value" => fee_value, "currency" => ""))
+                    push!(fee_details, (name = fee_name, value = fee_value, currency = "")::FeeDetail)
 
                     # Categorize fees based on common names
                     fee_name_lower = lowercase(fee_name)

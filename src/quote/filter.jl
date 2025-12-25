@@ -249,6 +249,8 @@ function stock_filter(client::OpenDClient, market::QotMarket.T;
     @info "stock_filter response" total_count=s2c.allCount returned_count=length(stock_data_list) last_page=s2c.lastPage
 
     # Build DataFrame
+    # Note: Using NamedTuple[] here is intentional - columns are dynamic based on user-provided filters.
+    # This is an acceptable trade-off since network latency dominates and rows are limited to 200.
     rows = NamedTuple[]
 
     for stock_data in stock_data_list

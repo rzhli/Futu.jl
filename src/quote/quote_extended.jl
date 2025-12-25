@@ -75,24 +75,23 @@ function get_option_expiration_date(client::OpenDClient, underlying_code::String
 
     dates = resp.s2c.dateList
 
-    rows = NamedTuple[]
-
-    for date_item in dates
+    # Use map for type stability
+    rows = map(dates) do date_item
         cycle_val = date_item.cycle
         cycle_enum = ExpirationCycle.T(cycle_val)
 
-        push!(rows, (
+        (
             strike_time = date_item.strikeTime,
             strike_timestamp = unix2datetime(date_item.strikeTimestamp),
             expiry_date_distance = Int(date_item.optionExpiryDateDistance),
             cycle = cycle_enum
-        ))
+        )
     end
 
     return DataFrame(rows)
 end
 
-# Get option chain 获取期权链
+# Get option chain 获取期权链 - optimized with Iterators.flatten
 function get_option_chain(client::OpenDClient, underlying_code::String;
     market::QotMarket.T = QotMarket.HK_Security, begin_time::Union{String, Nothing} = nothing, end_time::Union{String, Nothing} = nothing,
     option_type::Union{OptionType.T, Nothing} = nothing, option_cond_type::OptionCondType.T = OptionCondType.Unknow,
@@ -111,57 +110,52 @@ function get_option_chain(client::OpenDClient, underlying_code::String;
     resp = Client.api_request(client, UInt32(QOT_GET_OPTION_CHAIN), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_OPTION_CHAIN)])
     data = resp.s2c.optionChain
 
-    rows = NamedTuple[]
+    # Helper function to process option info
+    function process_option(option_info, option_type_str, strike_time, strike_timestamp)
+        if option_info !== nothing && isdefined(option_info, :basic)
+            basic = option_info.basic
+            security = basic.security
+            if !isempty(security.code)
+                market_label = string(QotMarket.T(security.market))
+                formatted_code = string(market_label, ".", security.code)
 
-    for chain_item in data
+                return (
+                    type = option_type_str,
+                    strike_time = strike_time,
+                    strike_timestamp = strike_timestamp,
+                    code = formatted_code,
+                    name = basic.name,
+                    lot_size = Int(basic.lotSize),
+                    stock_type = string(SecurityType.T(basic.secType)),
+                    list_time = basic.listTime,
+                    list_timestamp = unix2datetime(basic.listTimestamp),
+                    delisting = basic.delisting,
+                    id = basic.id,
+                )
+            end
+        end
+        return nothing
+    end
+
+    # Use Iterators.flatten to avoid NamedTuple[] with push!
+    rows = collect(Iterators.flatten(Iterators.flatten(map(data) do chain_item
         strike_time = chain_item.strikeTime
         strike_timestamp = unix2datetime(chain_item.strikeTimestamp)
 
-        for opt in chain_item.option
-            function process_option(option_info, option_type_str)
-                if option_info !== nothing && isdefined(option_info, :basic)
-                    basic = option_info.basic
-                    security = basic.security
-                    if !isempty(security.code)
-                        market_label = string(QotMarket.T(security.market))
-                        formatted_code = string(market_label, ".", security.code)
-
-                        return (
-                            type = option_type_str,
-                            strike_time = strike_time,
-                            strike_timestamp = strike_timestamp,
-                            code = formatted_code,
-                            name = basic.name,
-                            lot_size = Int(basic.lotSize),
-                            stock_type = string(SecurityType.T(basic.secType)),
-                            list_time = basic.listTime,
-                            list_timestamp = unix2datetime(basic.listTimestamp),
-                            delisting = basic.delisting,
-                            id = basic.id,
-                        )
-                    end
-                end
-                return nothing
-            end
-
-            call_row = process_option(opt.call, "CALL")
-            if call_row !== nothing
-                push!(rows, call_row)
-            end
-
-            put_row = process_option(opt.put, "PUT")
-            if put_row !== nothing
-                push!(rows, put_row)
-            end
+        map(chain_item.option) do opt
+            filter(!isnothing, [
+                process_option(opt.call, "CALL", strike_time, strike_timestamp),
+                process_option(opt.put, "PUT", strike_time, strike_timestamp)
+            ])
         end
-    end
+    end)))
 
     df = DataFrame(rows)
 
-    if all(==(unix2datetime(0)), df.list_timestamp)
+    if !isempty(df) && all(==(unix2datetime(0)), df.list_timestamp)
         select!(df, Not(:list_time, :list_timestamp))
     end
-    
+
     return df
 end
 
@@ -313,13 +307,12 @@ function get_warrant(client::OpenDClient, underlying_code::String;
     s2c = resp.s2c
     warrant_list = s2c.warrantDataList
 
-    # --- Build DataFrame ---
-    rows = NamedTuple[]
-    for wd in warrant_list
+    # --- Build DataFrame - use map for type stability ---
+    rows = map(warrant_list) do wd
         stock_code = string(QotMarket.T(wd.stock.market), ".", wd.stock.code)
         owner_code = string(QotMarket.T(wd.owner.market), ".", wd.owner.code)
 
-        push!(rows, (
+        (
             code = stock_code,
             name = wd.name,
             owner = owner_code,
@@ -364,7 +357,7 @@ function get_warrant(client::OpenDClient, underlying_code::String;
             price_recovery_ratio = wd.priceRecoveryRatio,
             upper_strike_price = wd.upperStrikePrice,
             lower_strike_price = wd.lowerStrikePrice,
-            in_line_price_status = PriceType.T(wd.inLinePriceStatus))
+            in_line_price_status = PriceType.T(wd.inLinePriceStatus)
         )
     end
 
@@ -448,10 +441,8 @@ function get_reference(client::OpenDClient, code::String;
     # Parse response
     static_info_list = resp.s2c.staticInfoList
 
-    # Build DataFrame
-    rows = NamedTuple[]
-
-    for static_info in static_info_list
+    # Build DataFrame - use map for type stability
+    rows = map(static_info_list) do static_info
         basic = static_info.basic
 
         # Format code with market prefix
@@ -476,7 +467,7 @@ function get_reference(client::OpenDClient, code::String;
             warrant_ex = static_info.warrantExData
             owner_code = string(QotMarket.T(warrant_ex.owner.market), ".", warrant_ex.owner.code)
 
-            row = merge(base_data, (
+            merge(base_data, (
                 warrant_type = WarrantType.T(warrant_ex.type),
                 warrant_owner = owner_code)
             )
@@ -484,7 +475,7 @@ function get_reference(client::OpenDClient, code::String;
             # Future-specific data
             future_ex = static_info.futureExData
 
-            row = merge(base_data, (
+            merge(base_data, (
                 last_trade_time = future_ex.lastTradeTime,
                 last_trade_timestamp = unix2datetime(future_ex.lastTradeTimestamp),
                 is_main_contract = future_ex.isMainContract)
@@ -495,7 +486,7 @@ function get_reference(client::OpenDClient, code::String;
             if isdefined(option_ex, :owner) && !isempty(option_ex.owner.code)
                 owner_code = string(QotMarket.T(option_ex.owner.market), ".", option_ex.owner.code)
 
-                row = merge(base_data, (
+                merge(base_data, (
                     option_type = OptionType.T(option_ex.type),
                     option_owner = owner_code,
                     strike_time = option_ex.strikeTime,
@@ -509,11 +500,9 @@ function get_reference(client::OpenDClient, code::String;
                     option_settlement_mode = OptionSettlementMode.T(option_ex.optionSettlementMode))
                 )
             else
-                row = base_data
+                base_data
             end
         end
-
-        push!(rows, row)
     end
 
     df = DataFrame(rows)
@@ -590,10 +579,8 @@ function get_future_info(client::OpenDClient, codes::Vector{String}; market::Qot
     # Parse response
     future_info_list = resp.s2c.futureInfoList
 
-    # Build DataFrame
-    rows = NamedTuple[]
-
-    for future_info in future_info_list
+    # Build DataFrame - use map for type stability
+    rows = map(future_info_list) do future_info
         # Format codes with market prefix
         code = string(QotMarket.T(future_info.security.market), ".", future_info.security.code)
 
@@ -614,7 +601,7 @@ function get_future_info(client::OpenDClient, codes::Vector{String}; market::Qot
         # Process trading times
         trade_times = [(begin_min = tt.begin_, end_min = tt.end_) for tt in future_info.tradeTime]
 
-        row = (
+        (
             # Basic information
             code = code,
             name = future_info.name,
@@ -643,8 +630,6 @@ function get_future_info(client::OpenDClient, codes::Vector{String}; market::Qot
             # Trading times
             trade_times = trade_times
         )
-
-        push!(rows, row)
     end
 
     df = DataFrame(rows)
@@ -757,10 +742,8 @@ function get_plate_security(client::OpenDClient, plate_code::String; market::Qot
     # Parse response
     static_info_list = resp.s2c.staticInfoList
 
-    # Build DataFrame
-    rows = NamedTuple[]
-
-    for static_info in static_info_list
+    # Build DataFrame - use map for type stability
+    rows = map(static_info_list) do static_info
         basic = static_info.basic
 
         # Format code with market prefix
@@ -780,13 +763,11 @@ function get_plate_security(client::OpenDClient, plate_code::String; market::Qot
         )
 
         # Check if we have extended data and add type-specific fields
-        row = base_data
-
         # Check for warrant extended data
         if isdefined(static_info, :warrantExData) && !isempty(static_info.warrantExData.owner.code)
             warrant_ex = static_info.warrantExData
             owner_code = string(QotMarket.T(warrant_ex.owner.market), ".", warrant_ex.owner.code)
-            row = merge(base_data, (
+            merge(base_data, (
                 warrant_type = WarrantType.T(warrant_ex.type),
                 warrant_owner = owner_code)
             )
@@ -794,7 +775,7 @@ function get_plate_security(client::OpenDClient, plate_code::String; market::Qot
         elseif isdefined(static_info, :optionExData) && !isempty(static_info.optionExData.owner.code)
             option_ex = static_info.optionExData
             owner_code = string(QotMarket.T(option_ex.owner.market), ".", option_ex.owner.code)
-            row = merge(base_data, (
+            merge(base_data, (
                 option_type = OptionType.T(option_ex.type),
                 option_owner = owner_code,
                 strike_time = option_ex.strikeTime,
@@ -810,20 +791,20 @@ function get_plate_security(client::OpenDClient, plate_code::String; market::Qot
         # Check for future extended data
         elseif isdefined(static_info, :futureExData) && !isempty(static_info.futureExData.lastTradeTime)
             future_ex = static_info.futureExData
-            row = merge(base_data, (
+            merge(base_data, (
                 last_trade_time = future_ex.lastTradeTime,
                 last_trade_timestamp = unix2datetime(future_ex.lastTradeTimestamp),
                 is_main_contract = future_ex.isMainContract)
             )
+        else
+            base_data
         end
-
-        push!(rows, row)
     end
 
     return DataFrame(rows)
 end
 
-# Get plate set (list of plates) 获取板块列表
+# Get plate set (list of plates) 获取板块列表 - optimized with map
 function get_plate_set(client::OpenDClient, market::QotMarket.T; plate_set_type::PlateSetType.T = PlateSetType.All)
     c2s = Qot_GetPlateSet.C2S(market = Int32(market), plateSetType = Int32(plate_set_type))
 
@@ -831,15 +812,13 @@ function get_plate_set(client::OpenDClient, market::QotMarket.T; plate_set_type:
     resp = Client.api_request(client, UInt32(QOT_GET_PLATE_SET), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_PLATE_SET)])
     plate_info_list = resp.s2c.plateInfoList
 
-    rows = NamedTuple[]
-
-    for plate_info in plate_info_list
+    rows = map(plate_info_list) do plate_info
         plate = plate_info.plate
         plate_type = PlateSetType.T(plate_info.plateType)
-        push!(rows, (
+        (
             code = plate.code,
             name = plate_info.name,
-            plate_type = string(plate_type))
+            plate_type = string(plate_type)
         )
     end
 
@@ -934,10 +913,8 @@ function get_static_info(client::OpenDClient; market::QotMarket.T = QotMarket.HK
     # Parse response
     static_info_list = resp.s2c.staticInfoList
 
-    # Build DataFrame
-    rows = NamedTuple[]
-
-    for static_info in static_info_list
+    # Build DataFrame - use map for type stability
+    rows = map(static_info_list) do static_info
         basic = static_info.basic
 
         # Format code with market prefix
@@ -957,13 +934,11 @@ function get_static_info(client::OpenDClient; market::QotMarket.T = QotMarket.HK
         )
 
         # Check if we have extended data and add type-specific fields
-        row = base_data
-
         # Check for warrant extended data
         if isdefined(static_info, :warrantExData) && !isempty(static_info.warrantExData.owner.code)
             warrant_ex = static_info.warrantExData
             owner_code = string(QotMarket.T(warrant_ex.owner.market), ".", warrant_ex.owner.code)
-            row = merge(base_data, (
+            merge(base_data, (
                 warrant_type = WarrantType.T(warrant_ex.type),
                 warrant_owner = owner_code)
             )
@@ -971,7 +946,7 @@ function get_static_info(client::OpenDClient; market::QotMarket.T = QotMarket.HK
         elseif isdefined(static_info, :optionExData) && !isempty(static_info.optionExData.owner.code)
             option_ex = static_info.optionExData
             owner_code = string(QotMarket.T(option_ex.owner.market), ".", option_ex.owner.code)
-            row = merge(base_data, (
+            merge(base_data, (
                 option_type = OptionType.T(option_ex.type),
                 option_owner = owner_code,
                 strike_time = option_ex.strikeTime,
@@ -987,14 +962,14 @@ function get_static_info(client::OpenDClient; market::QotMarket.T = QotMarket.HK
         # Check for future extended data
         elseif isdefined(static_info, :futureExData) && !isempty(static_info.futureExData.lastTradeTime)
             future_ex = static_info.futureExData
-            row = merge(base_data, (
+            merge(base_data, (
                 last_trade_time = future_ex.lastTradeTime,
                 last_trade_timestamp = unix2datetime(future_ex.lastTradeTimestamp),
                 is_main_contract = future_ex.isMainContract)
             )
+        else
+            base_data
         end
-
-        push!(rows, row)
     end
 
     return DataFrame(rows)
@@ -1072,10 +1047,8 @@ function get_ipo_list(client::OpenDClient; market::QotMarket.T = QotMarket.HK_Se
     # Parse response
     ipo_list = resp.s2c.ipoList
 
-    # Build DataFrame with market-specific fields
-    rows = NamedTuple[]
-
-    for ipo_data in ipo_list
+    # Build DataFrame with market-specific fields - use map for type stability
+    rows = map(ipo_list) do ipo_data
         basic = ipo_data.basic
 
         # Format code with market prefix
@@ -1090,12 +1063,10 @@ function get_ipo_list(client::OpenDClient; market::QotMarket.T = QotMarket.HK_Se
         )
 
         # Add market-specific extended data
-        row = base_data
-
         # Check for Hong Kong extended data
         if isdefined(ipo_data, :hkExData)
             hk_ex = ipo_data.hkExData
-            row = merge(base_data, (
+            merge(base_data, (
                 ipo_price_min = hk_ex.ipoPriceMin,
                 ipo_price_max = hk_ex.ipoPriceMax,
                 list_price = hk_ex.listPrice,
@@ -1108,7 +1079,7 @@ function get_ipo_list(client::OpenDClient; market::QotMarket.T = QotMarket.HK_Se
         # Check for US extended data
         elseif isdefined(ipo_data, :usExData)
             us_ex = ipo_data.usExData
-            row = merge(base_data, (
+            merge(base_data, (
                 ipo_price_min = us_ex.ipoPriceMin,
                 ipo_price_max = us_ex.ipoPriceMax,
                 issue_size = us_ex.issueSize)
@@ -1120,7 +1091,7 @@ function get_ipo_list(client::OpenDClient; market::QotMarket.T = QotMarket.HK_Se
             # Parse winning number data
             winning_nums = [(winning_name = wn.winningName, winning_info = wn.winningInfo) for wn in cn_ex.winningNumData]
 
-            row = merge(base_data, (
+            merge(base_data, (
                 apply_code = cn_ex.applyCode,
                 issue_size = cn_ex.issueSize,
                 online_issue_size = cn_ex.onlineIssueSize,
@@ -1139,9 +1110,9 @@ function get_ipo_list(client::OpenDClient; market::QotMarket.T = QotMarket.HK_Se
                 is_has_won = cn_ex.isHasWon,
                 winning_num_data = winning_nums)
             )
+        else
+            base_data
         end
-
-        push!(rows, row)
     end
 
     return DataFrame(rows)
@@ -1261,14 +1232,12 @@ function get_trade_date(client::OpenDClient; market::Union{TradeDateMarket.T, No
     # Parse response
     trade_dates = resp.s2c.tradeDateList
 
-    # Build DataFrame
-    rows = NamedTuple[]
-
-    for trade_date in trade_dates
-        push!(rows, (
+    # Build DataFrame - use map for type stability
+    rows = map(trade_dates) do trade_date
+        (
             time = trade_date.time,
             timestamp = trade_date.timestamp == 0.0 ? missing : unix2datetime(trade_date.timestamp),
-            trade_date_type = TradeDateType.T(trade_date.tradeDateType))
+            trade_date_type = TradeDateType.T(trade_date.tradeDateType)
         )
     end
 

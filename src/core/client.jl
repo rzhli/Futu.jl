@@ -155,8 +155,8 @@ function get_user_info(client::OpenDClient; flag::Union{UserInfoField.T, Integer
     return Connection.get_user_info(client.connection; flag=flag)
 end
 
-# Make API request
-function api_request(client::OpenDClient, proto_id::UInt32, req_proto, RspType::Type{T}) where T
+# Make API request - returns response of type T for type stability
+function api_request(client::OpenDClient, proto_id::UInt32, req_proto, RspType::Type{T})::T where T
     if !is_connected(client)
         throw(ConnectionError("Client not connected"))
     end

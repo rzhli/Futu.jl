@@ -84,8 +84,7 @@ end
 Remove PKCS7 padding
 """
 function remove_pkcs7_padding(data::Vector{UInt8})::Vector{UInt8}
-
-    @show padding_len = Int(data[end])
+    padding_len = Int(data[end])
     return data[1:end-padding_len]
 end
 
@@ -172,7 +171,7 @@ function decrypt_aes_cbc(data::Vector{UInt8}, key::String, iv::String)::Vector{U
     iv_hex  = bytes2hex(Vector{UInt8}(iv))
     cmd = `openssl enc -d -aes-128-cbc -K $key_hex -iv $iv_hex -nosalt -nopad`
 
-    @show decrypted_data = run_openssl_cmd(cmd, data)
+    decrypted_data = run_openssl_cmd(cmd, data)
     return remove_pkcs7_padding(decrypted_data)
 end
 

@@ -57,9 +57,9 @@ function ProtoHeader(proto_id::UInt32, body_len::UInt32, serial_no::UInt32 = 0)
     )
 end
 
-# Serialize header to bytes
+# Serialize header to bytes - optimized with pre-sized buffer
 function serialize_header(header::ProtoHeader)::Vector{UInt8}
-    buffer = IOBuffer()
+    buffer = IOBuffer(sizehint=PROTO_HEADER_SIZE)
     write(buffer, header.header_flag)
     write(buffer, htol(header.proto_id))
     write(buffer, UInt8(header.proto_fmt_type))
@@ -69,6 +69,19 @@ function serialize_header(header::ProtoHeader)::Vector{UInt8}
     write(buffer, header.body_sha1)
     write(buffer, header.reserved)
     return take!(buffer)
+end
+
+# Serialize header directly to an IOBuffer (more efficient for pack_body)
+function serialize_header!(buffer::IOBuffer, header::ProtoHeader)
+    write(buffer, header.header_flag)
+    write(buffer, htol(header.proto_id))
+    write(buffer, UInt8(header.proto_fmt_type))
+    write(buffer, header.proto_ver)
+    write(buffer, htol(header.serial_no))
+    write(buffer, htol(header.body_len))
+    write(buffer, header.body_sha1)
+    write(buffer, header.reserved)
+    return nothing
 end
 
 # Deserialize header from bytes
@@ -98,11 +111,18 @@ struct ResponsePacket
     data::Vector{UInt8}
 end
 
-struct ResponseResult
+# Parametric ResponseResult for type stability
+# Use ResponseResult{T} where T is the expected response type
+struct ResponseResult{T}
     success::Bool
-    data::Any
+    data::Union{T, Nothing}
     error::Union{Exception, Nothing}
 end
+
+# Helper constructor for failed responses
+ResponseResult{T}(error::Exception) where T = ResponseResult{T}(false, nothing, error)
+# Helper constructor for successful responses
+ResponseResult{T}(data::T) where T = ResponseResult{T}(true, data, nothing)
 
 # OpenD connection manager (Julia style with Channels)
 mutable struct OpenDConnection
@@ -126,7 +146,7 @@ mutable struct OpenDConnection
     # Julia-style: Use Channels for communication
     response_channel::Channel{ResponsePacket}  # Receive task -> Request handlers
     push_channel::Channel{ResponsePacket}      # Receive task -> Push handlers
-    pending_requests::Dict{UInt32, Channel{ResponseResult}}  # serial_no -> result channel
+    pending_requests::Dict{UInt32, Channel}    # serial_no -> result channel (stores Channel{ResponseResult{T}})
     request_lock::ReentrantLock  # Only for pending_requests dict
     
     # Background tasks
@@ -135,9 +155,9 @@ mutable struct OpenDConnection
 
     function OpenDConnection(host::String = DEFAULT_HOST, port::Int = DEFAULT_PORT; rsa_private_key_path::String="")
         default_algo = !isempty(rsa_private_key_path) ? Common.PacketEncAlgo.FTAES_ECB : Common.PacketEncAlgo.None
-        new(host, port, nothing, false, Atomic{UInt32}(0), rsa_private_key_path, default_algo, Int32(0), UInt64(0), 
+        new(host, port, nothing, false, Atomic{UInt32}(0), rsa_private_key_path, default_algo, Int32(0), UInt64(0),
         UInt64(0), "", "", Int32(10), Atomic{Float64}(0.0), Channel{ResponsePacket}(100), Channel{ResponsePacket}(100),
-        Dict{UInt32, Channel{ResponseResult}}(), ReentrantLock(), nothing, nothing
+        Dict{UInt32, Channel}(), ReentrantLock(), nothing, nothing
         )
     end
 end
@@ -330,8 +350,11 @@ function connect!(conn::OpenDConnection)
         )
         header.body_sha1 .= body_sha1
 
-        packet = vcat(serialize_header(header), final_body_bytes)
-        write(conn.socket, packet)
+        # Use single IOBuffer to avoid vcat allocation
+        packet_buffer = IOBuffer(sizehint=PROTO_HEADER_SIZE + length(final_body_bytes))
+        serialize_header!(packet_buffer, header)
+        write(packet_buffer, final_body_bytes)
+        write(conn.socket, take!(packet_buffer))
 
         # Receive InitConnect response
         header_buffer = read(conn.socket, PROTO_HEADER_SIZE)
@@ -434,12 +457,12 @@ end
 # Check if connected
 is_connected(conn::OpenDConnection)::Bool = conn.connected && conn.socket !== nothing && isopen(conn.socket)
 
-# Helper to pack body into a full packet
+# Helper to pack body into a full packet - optimized to avoid vcat
 function pack_body(conn::OpenDConnection, proto_id::UInt32, body_bytes::Vector{UInt8}, serial_no::UInt32)::Vector{UInt8}
     # Calculate SHA1 on the UNENCRYPTED body (per protocol documentation)
     # arrBodySHA1: 包体原始数据(解密后)的 SHA1 哈希值
     body_sha1 = sha1(body_bytes)
-    
+
     # Encrypt body based on requested algorithm
     encrypted_body = if conn.packet_enc_algo == Common.PacketEncAlgo.None
         # No encryption requested
@@ -462,12 +485,17 @@ function pack_body(conn::OpenDConnection, proto_id::UInt32, body_bytes::Vector{U
         serial_no
     )
     header.body_sha1 .= body_sha1
-    header_bytes = serialize_header(header)
-    return vcat(header_bytes, encrypted_body)
+
+    # Use single IOBuffer to avoid vcat allocation
+    packet_buffer = IOBuffer(sizehint=PROTO_HEADER_SIZE + length(encrypted_body))
+    serialize_header!(packet_buffer, header)
+    write(packet_buffer, encrypted_body)
+    return take!(packet_buffer)
 end
 
 # Julia-style: Use Channels for request-response pattern
-function request_sync(conn::OpenDConnection, proto_id::UInt32, req_proto, RspType::Type{T}; timeout::Float64=30.0) where T
+# Returns the response of type T for type stability
+function request_sync(conn::OpenDConnection, proto_id::UInt32, req_proto, RspType::Type{T}; timeout::Float64=30.0)::T where T
     if !is_connected(conn)      # 后续连接稳定后，可以删除
         @warn "Not connected. Attempting to reconnect..."
         try
@@ -480,17 +508,17 @@ function request_sync(conn::OpenDConnection, proto_id::UInt32, req_proto, RspTyp
 
     # Get next serial number (atomic operation)
     serial_no = atomic_add!(conn.serial_no, UInt32(1)) + UInt32(1)
-    
-    # Create a channel for this request's response
-    result_channel = Channel{ResponseResult}(1)
-    
+
+    # Create a typed channel for this request's response
+    result_channel = Channel{ResponseResult{T}}(1)
+
     lock(conn.request_lock) do
         conn.pending_requests[serial_no] = result_channel
     end
 
     try
-        # Send request
-        io = IOBuffer()
+        # Send request - use pre-sized IOBuffer for efficiency
+        io = IOBuffer(sizehint=256)
         PB.encode(ProtoEncoder(io), req_proto)
         body_bytes = take!(io)
         packet = pack_body(conn, proto_id, body_bytes, serial_no)
@@ -514,7 +542,7 @@ function request_sync(conn::OpenDConnection, proto_id::UInt32, req_proto, RspTyp
         end
 
         try
-            result = fetch(result_channel)
+            result = fetch(result_channel)::ResponseResult{T}
 
             if timeout_occurred[]
                 throw(ConnectionError("Request timeout after $(timeout) seconds (proto_id: $proto_id)"))
@@ -539,8 +567,8 @@ function request_sync(conn::OpenDConnection, proto_id::UInt32, req_proto, RspTyp
         if !result.success
             throw(result.error)
         end
-        
-        return result.data
+
+        return result.data::T
     finally
         lock(conn.request_lock) do
             delete!(conn.pending_requests, serial_no)
@@ -623,15 +651,18 @@ function start_receive_task(conn::OpenDConnection)
                     # Use multiple dispatch to handle different proto types
                     # @info "Received response" proto_id=packet.proto_id data_length=length(packet.data)
                     resp = decode_response(packet.proto_id, packet.data)
+                    RespT = typeof(resp)
 
                     if resp.retType != Int32(Common.RetType.Succeed)
-                        put!(result_chan, ResponseResult(false, nothing, FutuError(resp.retType, resp.retMsg)))
+                        put!(result_chan, ResponseResult{RespT}(false, nothing, FutuError(resp.retType, resp.retMsg)))
                     else
-                        put!(result_chan, ResponseResult(true, resp, nothing))
+                        put!(result_chan, ResponseResult{RespT}(true, resp, nothing))
                     end
                 catch e
                     @error "Failed to decode response" proto_id=packet.proto_id data_length=length(packet.data) exception=(e, catch_backtrace())
-                    put!(result_chan, ResponseResult(false, nothing, e))
+                    # For errors, we need to put something in the channel
+                    # Use Any as fallback type since we don't know the expected type
+                    put!(result_chan, ResponseResult{Any}(false, nothing, e))
                 end
             end
         catch e

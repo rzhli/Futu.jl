@@ -151,7 +151,7 @@ function update_quote(client::OpenDClient, codes::Vector{String}, sub_type::SubT
 end
 
 # ================================ 拉取 ==================================
-# Get market snapshot
+# Get market snapshot - optimized with pre-allocated vector
 function get_market_snapshot(client::OpenDClient, codes::Vector{String}; market::QotMarket.T = QotMarket.HK_Security)
     securities = [Qot_Common.Security(Int(market), code) for code in codes]
 
@@ -161,9 +161,8 @@ function get_market_snapshot(client::OpenDClient, codes::Vector{String}; market:
     resp = Client.api_request(client, UInt32(QOT_GET_SECURITY_SNAPSHOT), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_SECURITY_SNAPSHOT)])
     snapshots = resp.s2c.snapshotList
 
-    rows = NamedTuple[]
-
-    for snapshot in snapshots
+    # Use map with explicit processing to avoid Vector{Any}
+    rows = map(snapshots) do snapshot
         basic = snapshot.basic
         security = basic.security
 
@@ -374,13 +373,14 @@ function get_market_snapshot(client::OpenDClient, codes::Vector{String}; market:
             overnight_amplitude = overnight.amplitude
         )
 
-        push!(rows, merge(base_fields, equity_fields, wrt_fields, option_fields, index_fields, plate_fields, future_fields, trust_fields, pre_fields, after_fields, overnight_fields))
+        # Return merged tuple instead of push!
+        merge(base_fields, equity_fields, wrt_fields, option_fields, index_fields, plate_fields, future_fields, trust_fields, pre_fields, after_fields, overnight_fields)
     end
 
     return DataFrame(rows)
 end
 
-# Get real-time basic quote for subscribed securities  一些字段数据格式需要修改（时间格式..）
+# Get real-time basic quote for subscribed securities - optimized with map
 function get_basic_quote(client::OpenDClient, codes::Vector{String}; market::QotMarket.T = QotMarket.HK_Security)
     securities = [Qot_Common.Security(Int(market), code) for code in codes]
 
@@ -390,9 +390,7 @@ function get_basic_quote(client::OpenDClient, codes::Vector{String}; market::Qot
     resp = Client.api_request(client, UInt32(QOT_GET_BASIC_QOT), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_BASIC_QOT)])
     quotes = resp.s2c.basicQotList
 
-    rows = NamedTuple[]
-
-    for basic in quotes
+    rows = map(quotes) do basic
         security = basic.security
         market_label = string(QotMarket.T(security.market))
         formatted_code = string(market_label, ".", security.code)
@@ -494,13 +492,14 @@ function get_basic_quote(client::OpenDClient, codes::Vector{String}; market::Qot
             option_index_option_type = string(Qot_Common.IndexOptionType.T(option_data.indexOptionType))
         )
 
-        push!(rows, merge(base_fields, pre_fields, after_fields, overnight_fields, future_fields, warrant_fields, option_fields))
+        # Return merged tuple instead of push!
+        merge(base_fields, pre_fields, after_fields, overnight_fields, future_fields, warrant_fields, option_fields)
     end
 
     return DataFrame(rows)
 end
 
-# Get order book
+# Get order book - optimized with NamedTuple
 function get_order_book(client::OpenDClient, code::String; market::QotMarket.T = QotMarket.HK_Security, depth::Int = 10)
     security = Qot_Common.Security(Int(market), code)
 
@@ -515,9 +514,10 @@ function get_order_book(client::OpenDClient, code::String; market::QotMarket.T =
     ask_list = resp.s2c.orderBookAskList
     bid_list = resp.s2c.orderBookBidList
 
-    asks = [Dict("price" => item.price, "volume" => Int64(item.volume), "order_count" => Int64(item.orederCount)) for item in ask_list]
-
-    bids = [Dict("price" => item.price, "volume" => Int64(item.volume), "order_count" => Int64(item.orederCount)) for item in bid_list]
+    # Use NamedTuple instead of Dict for type stability
+    OrderBookEntry = @NamedTuple{price::Float64, volume::Int64, order_count::Int64}
+    asks = [(price = item.price, volume = Int64(item.volume), order_count = Int64(item.orederCount))::OrderBookEntry for item in ask_list]
+    bids = [(price = item.price, volume = Int64(item.volume), order_count = Int64(item.orederCount))::OrderBookEntry for item in bid_list]
 
     security = resp.s2c.security
     market_label = string(Qot_Common.QotMarket.T(security.market))
@@ -540,7 +540,7 @@ function get_order_book(client::OpenDClient, code::String; market::QotMarket.T =
     # return book
 end
 
-# Get K-line data
+# Get K-line data - optimized with map
 function get_kline(client::OpenDClient, code::String; market::QotMarket.T = QotMarket.HK_Security, kl_type::KLType.T = KLType.K_Day, count::Int = 100, from_date::Union{Date, Nothing} = nothing, to_date::Union{Date, Nothing} = nothing)
     security = Qot_Common.Security(Int(market), code)
 
@@ -561,11 +561,9 @@ function get_kline(client::OpenDClient, code::String; market::QotMarket.T = QotM
     resp = Client.api_request(client, UInt32(QOT_GET_KLINE), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_KLINE)])
     data = resp.s2c.klList
 
-    # Convert to DataFrame
-    rows = NamedTuple[]
-
-    for item in data
-        push!(rows, (
+    # Convert to DataFrame using map for type stability
+    rows = map(data) do item
+        (
             time = item.time,
             open = item.openPrice,
             close = item.closePrice,
@@ -573,13 +571,13 @@ function get_kline(client::OpenDClient, code::String; market::QotMarket.T = QotM
             low = item.lowPrice,
             volume = item.volume,
             turnover = item.turnover
-        ))
+        )
     end
 
     return DataFrame(rows)
 end
 
-# Get real-time data
+# Get real-time data - optimized with map
 function get_rt(client::OpenDClient, code::String; market::QotMarket.T = QotMarket.HK_Security)
     security = Qot_Common.Security(Int(market), code)
 
@@ -592,13 +590,11 @@ function get_rt(client::OpenDClient, code::String; market::QotMarket.T = QotMark
     resp = Client.api_request(client, UInt32(QOT_GET_RT_DATA), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_RT_DATA)])
     data = resp.s2c.rtList
 
-    # Convert to DataFrame
-    rows = NamedTuple[]
-
-    for item in data
+    # Convert to DataFrame using map for type stability
+    rows = map(data) do item
         # Convert Unix timestamp to DateTime, then extract time part
         dt = unix2datetime(item.timestamp) + Hour(8)    # 转换为北京时间
-        push!(rows, (
+        (
             time = item.time,
             minute = item.minute,
             is_blank = item.isBlank,
@@ -608,13 +604,13 @@ function get_rt(client::OpenDClient, code::String; market::QotMarket.T = QotMark
             volume = item.volume,
             turnover = item.turnover,
             timestamp = Time(dt)
-        ))
+        )
     end
 
     return DataFrame(rows)
 end
 
-# Get ticker data
+# Get ticker data - optimized with map
 function get_ticker(client::OpenDClient, code::String; market::QotMarket.T = QotMarket.HK_Security, count::Int = 100)
     security = Qot_Common.Security(Int(market), code)
 
@@ -628,14 +624,12 @@ function get_ticker(client::OpenDClient, code::String; market::QotMarket.T = Qot
     resp = Client.api_request(client, UInt32(QOT_GET_TICKER), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_TICKER)])
     data = resp.s2c.tickerList
 
-    # Convert to DataFrame
-    rows = NamedTuple[]
-
-    for item in data
+    # Convert to DataFrame using map for type stability
+    rows = map(data) do item
         direction = item.dir == 1 ? "BUY" : item.dir == 2 ? "SELL" : "NEUTRAL"
         ticker_type = Qot_Common.TickerType.T(item.type)
         timestamp = unix2datetime(item.timestamp) + Hour(8)     # 转换为北京时间
-        push!(rows, (
+        (
             time = item.time,
             sequence = item.sequence,
             direction = direction,
@@ -647,7 +641,7 @@ function get_ticker(client::OpenDClient, code::String; market::QotMarket.T = Qot
             type_sign = Int32(item.typeSign),
             push_data_type = item.pushDataType,
             timestamp = Time(timestamp)
-        ))
+        )
     end
 
     return DataFrame(rows)
@@ -678,7 +672,7 @@ function get_broker_queue(client::OpenDClient, code::String; market::QotMarket.T
 end
 
 # ================================ 基本数据 ===================================
-# Get market state for securities
+# Get market state for securities - optimized with map
 function get_market_state(client::OpenDClient, codes::Vector{String}; market::QotMarket.T = QotMarket.HK_Security)
     securities = [Qot_Common.Security(Int(market), code) for code in codes]
 
@@ -688,22 +682,20 @@ function get_market_state(client::OpenDClient, codes::Vector{String}; market::Qo
     resp = Client.api_request(client, UInt32(QOT_GET_MARKET_STATE), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_MARKET_STATE)])
     market_infos = resp.s2c.marketInfoList
 
-    rows = NamedTuple[]
-
-    for info in market_infos
+    rows = map(market_infos) do info
         security = info.security
         market_label = string(QotMarket.T(security.market))
         formatted_code = string(market_label, ".", security.code)
         state_enum = Qot_Common.QotMarketState.T(info.marketState)
 
-        push!(rows, (
+        (
             code = formatted_code,
             market = market_label,
             raw_code = security.code,
             name = info.name,
             market_state = string(state_enum),
             market_state_value = Int(info.marketState)
-        ))
+        )
     end
 
     return DataFrame(rows)
@@ -730,12 +722,12 @@ function get_capital_flow(client::OpenDClient, code::String; market::QotMarket.T
 
     resp = Client.api_request(client, UInt32(QOT_GET_CAPITAL_FLOW), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_CAPITAL_FLOW)])
     flow_items = resp.s2c.flowItemList
-    rows = NamedTuple[]
-    
-    for item in flow_items
+
+    # Use map for type stability
+    rows = map(flow_items) do item
         dt = unix2datetime(item.timestamp) + Hour(8)
         timestamp = Time(dt)
-        push!(rows, (
+        (
             time = isempty(item.time) ? missing : item.time,
             timestamp = item.timestamp == 0.0 ? missing : timestamp,
             inflow = item.inFlow,
@@ -744,7 +736,7 @@ function get_capital_flow(client::OpenDClient, code::String; market::QotMarket.T
             big_inflow = item.bigInFlow,
             mid_inflow = item.midInFlow,
             small_inflow = item.smlInFlow,
-        ))
+        )
     end
 
     df = DataFrame(rows)
@@ -841,7 +833,7 @@ function get_capital_distribution(client::OpenDClient, code::String; market::Qot
     # return rows
 end
 
-# 获取股票所属板块
+# 获取股票所属板块 - optimized with Iterators.flatten
 function get_owner_plate(client::OpenDClient, codes::Vector{String}; market::QotMarket.T = QotMarket.HK_Security)
     securities = [Qot_Common.Security(Int(market), code) for code in codes]
 
@@ -851,25 +843,24 @@ function get_owner_plate(client::OpenDClient, codes::Vector{String}; market::Qot
     resp = Client.api_request(client, UInt32(QOT_GET_OWNER_PLATE), req, PROTO_RESPONSE_MAP[UInt32(QOT_GET_OWNER_PLATE)])
     owner_list = resp.s2c.ownerPlateList
 
-    rows = NamedTuple[]
-
-    for item in owner_list
+    # Use Iterators.flatten to avoid push! with abstract NamedTuple[]
+    rows = collect(Iterators.flatten(map(owner_list) do item
         security = item.security
         market_label = string(QotMarket.T(security.market))
-        code = string(market_label, ".", security.code)
+        code_str = string(market_label, ".", security.code)
 
-        for plate in item.plateInfoList
-            push!(rows, (
-                code = code,
+        map(item.plateInfoList) do plate
+            (
+                code = code_str,
                 raw_code = security.code,
                 name = isempty(item.name) ? missing : item.name,
                 plate_code = plate.plate.code,
                 plate_market = string(QotMarket.T(plate.plate.market)),
                 plate_name = isempty(plate.name) ? missing : plate.name,
                 plate_type = string(Qot_Common.PlateSetType.T(plate.plateType))
-            ))
+            )
         end
-    end
+    end))
 
     return DataFrame(rows)
 end
@@ -907,10 +898,9 @@ function get_history_kline(client::OpenDClient, code::String;
     req = Qot_RequestHistoryKL.Request(; c2s = c2s)
     resp = Client.api_request(client, UInt32(QOT_REQUEST_HISTORY_KL), req, PROTO_RESPONSE_MAP[UInt32(QOT_REQUEST_HISTORY_KL)])
 
-    rows = NamedTuple[]
-
-    for item in resp.s2c.klList
-        push!(rows, (
+    # Use map for type stability
+    rows = map(resp.s2c.klList) do item
+        (
             time = item.time,
             is_blank = item.isBlank,
             high = item.highPrice,
@@ -922,7 +912,7 @@ function get_history_kline(client::OpenDClient, code::String;
             turnover = item.turnover,
             turnover_rate = item.turnoverRate,
             pe = item.pe,
-            change_rate = item.changeRate)
+            change_rate = item.changeRate
         )
     end
 
@@ -934,88 +924,64 @@ function get_history_kline(client::OpenDClient, code::String;
     )
 end
 
-# 获取复权因子
+# 获取复权因子 - optimized with typed rows
 function get_rehab(client::OpenDClient, code::String; market::QotMarket.T = QotMarket.HK_Security)
     security = Qot_Common.Security(Int(market), code)
 
     req = Qot_RequestRehab.Request(; c2s = Qot_RequestRehab.C2S(; security = security))
     resp = Client.api_request(client, UInt32(QOT_REQUEST_REHAB), req, PROTO_RESPONSE_MAP[UInt32(QOT_REQUEST_REHAB)])
 
-    processed_rows = Dict{Symbol, Any}[]
     ratio(base, ert) = base == 0 ? missing : ert / base
 
-    for item in resp.s2c.rehabList
-        row = Dict{Symbol, Any}()
-        row[:time] = item.time
-        row[:timestamp] = item.timestamp
-        row[:company_act_flag] = item.companyActFlag
-        row[:fwd_factor_a] = item.fwdFactorA
-        row[:fwd_factor_b] = item.fwdFactorB
-        row[:bwd_factor_a] = item.bwdFactorA
-        row[:bwd_factor_b] = item.bwdFactorB
-
+    # Use map with all fields pre-defined (missing for non-applicable fields)
+    rows = map(resp.s2c.rehabList) do item
         has_flag(flag) = (item.companyActFlag & Int64(flag)) != 0
 
-        if has_flag(CompanyAct.Split)
-            row[:split_base] = item.splitBase
-            row[:split_ert] = item.splitErt
-            row[:split_ratio] = ratio(item.splitBase, item.splitErt)
-        end
-        if has_flag(CompanyAct.Join)
-            row[:join_base] = item.joinBase
-            row[:join_ert] = item.joinErt
-            row[:join_ratio] = ratio(item.joinBase, item.joinErt)
-        end
-        if has_flag(CompanyAct.Bonus)
-            row[:bonus_base] = item.bonusBase
-            row[:bonus_ert] = item.bonusErt
-            row[:bonus_ratio] = ratio(item.bonusBase, item.bonusErt)
-        end
-        if has_flag(CompanyAct.Transfer)
-            row[:transfer_base] = item.transferBase
-            row[:transfer_ert] = item.transferErt
-            row[:transfer_ratio] = ratio(item.transferBase, item.transferErt)
-        end
-        if has_flag(CompanyAct.Allot)
-            row[:allot_base] = item.allotBase
-            row[:allot_ert] = item.allotErt
-            row[:allot_ratio] = ratio(item.allotBase, item.allotErt)
-            row[:allot_price] = item.allotPrice
-        end
-        if has_flag(CompanyAct.Add)
-            row[:add_base] = item.addBase
-            row[:add_ert] = item.addErt
-            row[:add_ratio] = ratio(item.addBase, item.addErt)
-            row[:add_price] = item.addPrice
-        end
-        if has_flag(CompanyAct.Dividend)
-            row[:dividend] = item.dividend
-        end
-        if has_flag(CompanyAct.SPDividend)
-            row[:sp_dividend] = item.spDividend
-        end
-        if has_flag(CompanyAct.SpinOff)
-            row[:spin_off_base] = item.spinOffBase
-            row[:spin_off_ert] = item.spinOffErt
-            row[:spin_off_ratio] = ratio(item.spinOffBase, item.spinOffErt)
-        end
-        push!(processed_rows, row)
+        (
+            time = item.time,
+            timestamp = item.timestamp,
+            company_act_flag = item.companyActFlag,
+            fwd_factor_a = item.fwdFactorA,
+            fwd_factor_b = item.fwdFactorB,
+            bwd_factor_a = item.bwdFactorA,
+            bwd_factor_b = item.bwdFactorB,
+            # Split fields
+            split_base = has_flag(CompanyAct.Split) ? item.splitBase : missing,
+            split_ert = has_flag(CompanyAct.Split) ? item.splitErt : missing,
+            split_ratio = has_flag(CompanyAct.Split) ? ratio(item.splitBase, item.splitErt) : missing,
+            # Join fields
+            join_base = has_flag(CompanyAct.Join) ? item.joinBase : missing,
+            join_ert = has_flag(CompanyAct.Join) ? item.joinErt : missing,
+            join_ratio = has_flag(CompanyAct.Join) ? ratio(item.joinBase, item.joinErt) : missing,
+            # Bonus fields
+            bonus_base = has_flag(CompanyAct.Bonus) ? item.bonusBase : missing,
+            bonus_ert = has_flag(CompanyAct.Bonus) ? item.bonusErt : missing,
+            bonus_ratio = has_flag(CompanyAct.Bonus) ? ratio(item.bonusBase, item.bonusErt) : missing,
+            # Transfer fields
+            transfer_base = has_flag(CompanyAct.Transfer) ? item.transferBase : missing,
+            transfer_ert = has_flag(CompanyAct.Transfer) ? item.transferErt : missing,
+            transfer_ratio = has_flag(CompanyAct.Transfer) ? ratio(item.transferBase, item.transferErt) : missing,
+            # Allot fields
+            allot_base = has_flag(CompanyAct.Allot) ? item.allotBase : missing,
+            allot_ert = has_flag(CompanyAct.Allot) ? item.allotErt : missing,
+            allot_ratio = has_flag(CompanyAct.Allot) ? ratio(item.allotBase, item.allotErt) : missing,
+            allot_price = has_flag(CompanyAct.Allot) ? item.allotPrice : missing,
+            # Add fields
+            add_base = has_flag(CompanyAct.Add) ? item.addBase : missing,
+            add_ert = has_flag(CompanyAct.Add) ? item.addErt : missing,
+            add_ratio = has_flag(CompanyAct.Add) ? ratio(item.addBase, item.addErt) : missing,
+            add_price = has_flag(CompanyAct.Add) ? item.addPrice : missing,
+            # Dividend fields
+            dividend = has_flag(CompanyAct.Dividend) ? item.dividend : missing,
+            sp_dividend = has_flag(CompanyAct.SPDividend) ? item.spDividend : missing,
+            # SpinOff fields
+            spin_off_base = has_flag(CompanyAct.SpinOff) ? item.spinOffBase : missing,
+            spin_off_ert = has_flag(CompanyAct.SpinOff) ? item.spinOffErt : missing,
+            spin_off_ratio = has_flag(CompanyAct.SpinOff) ? ratio(item.spinOffBase, item.spinOffErt) : missing
+        )
     end
 
-    # Collect all unique keys from all rows
-    all_keys = union(keys.(processed_rows)...)
-
-    # Create a list of NamedTuples, ensuring all have the same keys
-    final_rows = NamedTuple[]
-    for row_dict in processed_rows
-        nt_pairs = Pair{Symbol, Any}[]
-        for key in all_keys
-            push!(nt_pairs, key => get(row_dict, key, missing))
-        end
-        push!(final_rows, NamedTuple(nt_pairs))
-    end
-
-    df = DataFrame(final_rows)
+    df = DataFrame(rows)
 
     # Drop columns where all values are missing
     cols_to_drop = Symbol[]
@@ -1024,7 +990,7 @@ function get_rehab(client::OpenDClient, code::String; market::QotMarket.T = QotM
             push!(cols_to_drop, Symbol(col_name))
         end
     end
-    
+
     if !isempty(cols_to_drop)
         select!(df, Not(cols_to_drop))
     end
@@ -1088,18 +1054,17 @@ function get_history_kl_quota(client::OpenDClient; get_detail::Bool = false)
     # Parse response
     s2c = resp.s2c
 
-    # Build detail list if requested
+    # Build detail list if requested - use map for type stability
     detail_df = if get_detail && !isempty(s2c.detailList)
-        rows = NamedTuple[]
-        for detail_item in s2c.detailList
+        rows = map(s2c.detailList) do detail_item
             security = detail_item.security
             code = string(QotMarket.T(security.market), ".", security.code)
 
-            push!(rows, (
+            (
                 code = code,
                 name = detail_item.name,
                 request_time = detail_item.requestTime,
-                request_timestamp = unix2datetime(detail_item.requestTimeStamp))
+                request_timestamp = unix2datetime(detail_item.requestTimeStamp)
             )
         end
         DataFrame(rows)

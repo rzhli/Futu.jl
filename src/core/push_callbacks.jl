@@ -238,41 +238,53 @@ function parse_push_data(proto_id::UInt32, resp)
     end
 end
 
-# Parse basic quote push data
+# Parse basic quote push data - optimized with NamedTuple instead of Dict
 function parse_basic_quote_push(resp::Qot_UpdateBasicQot.Response)
-    results = Vector{Dict{String, Any}}()
+    basicQotList = resp.s2c.basicQotList
+    n = length(basicQotList)
 
-    for qot in resp.s2c.basicQotList
+    # Pre-allocate with known NamedTuple type
+    results = Vector{@NamedTuple{
+        code::String, market::Int32, name::String,
+        last_price::Float64, prev_close::Float64, open_price::Float64,
+        high_price::Float64, low_price::Float64, volume::Int64,
+        turnover::Float64, turnover_rate::Float64, amplitude::Float64,
+        update_time::String, update_timestamp::Float64, is_suspended::Bool,
+        list_time::String, list_timestamp::Float64, dark_status::Int32, sec_status::Int32
+    }}(undef, n)
+
+    @inbounds for i in 1:n
+        qot = basicQotList[i]
         security = qot.security
         market_label = string(QotMarket.T(security.market))
         formatted_code = string(market_label, ".", security.code)
-        push!(results, Dict(
-            "code" => formatted_code,
-            "market" => security.market,
-            "name" => qot.name,
-            "last_price" => qot.curPrice,
-            "prev_close" => qot.lastClosePrice,
-            "open_price" => qot.openPrice,
-            "high_price" => qot.highPrice,
-            "low_price" => qot.lowPrice,
-            "volume" => qot.volume,
-            "turnover" => qot.turnover,
-            "turnover_rate" => qot.turnoverRate,
-            "amplitude" => qot.amplitude,
-            "update_time" => qot.updateTime,
-            "update_timestamp" => qot.updateTimestamp,
-            "is_suspended" => qot.isSuspended,
-            "list_time" => qot.listTime,
-            "list_timestamp" => qot.listTimestamp,
-            "dark_status" => qot.darkStatus,
-            "sec_status" => qot.secStatus)
+        results[i] = (
+            code = formatted_code,
+            market = security.market,
+            name = qot.name,
+            last_price = qot.curPrice,
+            prev_close = qot.lastClosePrice,
+            open_price = qot.openPrice,
+            high_price = qot.highPrice,
+            low_price = qot.lowPrice,
+            volume = qot.volume,
+            turnover = qot.turnover,
+            turnover_rate = qot.turnoverRate,
+            amplitude = qot.amplitude,
+            update_time = qot.updateTime,
+            update_timestamp = qot.updateTimestamp,
+            is_suspended = qot.isSuspended,
+            list_time = qot.listTime,
+            list_timestamp = qot.listTimestamp,
+            dark_status = qot.darkStatus,
+            sec_status = qot.secStatus
         )
     end
 
     return results
 end
 
-# Parse order book push data
+# Parse order book push data - optimized with NamedTuple
 function parse_order_book_push(resp::Qot_UpdateOrderBook.Response)
     s2c = resp.s2c
     security = s2c.security
@@ -281,32 +293,38 @@ function parse_order_book_push(resp::Qot_UpdateOrderBook.Response)
     market_label = string(QotMarket.T(security.market))
     formatted_code = string(market_label, ".", security.code)
 
-    level_details(list) = [
-        Dict(
-            "price" => item.price,
-            "volume" => item.volume,
-            "order_count" => item.orederCount,
-            "details" => [Dict("order_id" => detail.orderID, "volume" => detail.volume) for detail in item.detailList]
-        ) for item in list
-    ]
+    # Type alias for order book level
+    OrderDetail = @NamedTuple{order_id::UInt64, volume::Int64}
+    OrderBookLevel = @NamedTuple{price::Float64, volume::Int64, order_count::Int32, details::Vector{OrderDetail}}
+
+    function level_details(list)
+        return [
+            (
+                price = item.price,
+                volume = item.volume,
+                order_count = item.orederCount,
+                details = [(order_id = detail.orderID, volume = detail.volume) for detail in item.detailList]
+            )::OrderBookLevel for item in list
+        ]
+    end
 
     ask_list = level_details(s2c.orderBookAskList)
     bid_list = level_details(s2c.orderBookBidList)
 
-    return Dict(
-        "code" => formatted_code,
-        "market" => security.market,
-        "name" => display_name,
-        "ask_list" => ask_list,
-        "bid_list" => bid_list,
-        "server_recv_time_bid" => s2c.svrRecvTimeBid,
-        "server_recv_time_bid_timestamp" => s2c.svrRecvTimeBidTimestamp,
-        "server_recv_time_ask" => s2c.svrRecvTimeAsk,
-        "server_recv_time_ask_timestamp" => s2c.svrRecvTimeAskTimestamp
+    return (
+        code = formatted_code,
+        market = security.market,
+        name = display_name,
+        ask_list = ask_list,
+        bid_list = bid_list,
+        server_recv_time_bid = s2c.svrRecvTimeBid,
+        server_recv_time_bid_timestamp = s2c.svrRecvTimeBidTimestamp,
+        server_recv_time_ask = s2c.svrRecvTimeAsk,
+        server_recv_time_ask_timestamp = s2c.svrRecvTimeAskTimestamp
     )
 end
 
-# Parse K-line push data
+# Parse K-line push data - optimized with NamedTuple
 function parse_kline_push(resp::Qot_UpdateKL.Response)
     s2c = resp.s2c
     security = s2c.security
@@ -315,33 +333,41 @@ function parse_kline_push(resp::Qot_UpdateKL.Response)
     market_label = string(QotMarket.T(security.market))
     formatted_code = string(market_label, ".", security.code)
 
-    kl_list = [Dict(
-        "time" => item.time,
-        "timestamp" => item.timestamp,
-        "is_blank" => item.isBlank,
-        "open" => item.openPrice,
-        "high" => item.highPrice,
-        "low" => item.lowPrice,
-        "close" => item.closePrice,
-        "last_close" => item.lastClosePrice,
-        "volume" => item.volume,
-        "turnover" => item.turnover,
-        "turnover_rate" => item.turnoverRate,
-        "pe_ratio" => item.pe,
-        "change_rate" => item.changeRate
-    ) for item in s2c.klList]
+    KLineData = @NamedTuple{
+        time::String, timestamp::Float64, is_blank::Bool,
+        open::Float64, high::Float64, low::Float64, close::Float64, last_close::Float64,
+        volume::Int64, turnover::Float64, turnover_rate::Float64, pe_ratio::Float64, change_rate::Float64
+    }
 
-    return Dict(
-        "code" => formatted_code,
-        "market" => security.market,
-        "name" => display_name,
-        "rehab_type" => s2c.rehabType,
-        "kl_type" => s2c.klType,
-        "kl_list" => kl_list
+    kl_list = [
+        (
+            time = item.time,
+            timestamp = item.timestamp,
+            is_blank = item.isBlank,
+            open = item.openPrice,
+            high = item.highPrice,
+            low = item.lowPrice,
+            close = item.closePrice,
+            last_close = item.lastClosePrice,
+            volume = item.volume,
+            turnover = item.turnover,
+            turnover_rate = item.turnoverRate,
+            pe_ratio = item.pe,
+            change_rate = item.changeRate
+        )::KLineData for item in s2c.klList
+    ]
+
+    return (
+        code = formatted_code,
+        market = security.market,
+        name = display_name,
+        rehab_type = s2c.rehabType,
+        kl_type = s2c.klType,
+        kl_list = kl_list
     )
 end
 
-# Parse real-time data push
+# Parse real-time data push - optimized with NamedTuple
 function parse_rt_data_push(resp::Qot_UpdateRT.Response)
     s2c = resp.s2c
     security = s2c.security
@@ -349,27 +375,35 @@ function parse_rt_data_push(resp::Qot_UpdateRT.Response)
     market_label = string(QotMarket.T(security.market))
     formatted_code = string(market_label, ".", security.code)
 
-    rt_list = [Dict(
-        "time" => item.time,
-        "minute" => item.minute,
-        "is_blank" => item.isBlank,
-        "price" => item.price,
-        "last_close_price" => item.lastClosePrice,
-        "avg_price" => item.avgPrice,
-        "volume" => item.volume,
-        "turnover" => item.turnover,
-        "timestamp" => item.timestamp
-    ) for item in s2c.rtList]
+    RTData = @NamedTuple{
+        time::String, minute::Int32, is_blank::Bool, price::Float64,
+        last_close_price::Float64, avg_price::Float64, volume::Int64,
+        turnover::Float64, timestamp::Float64
+    }
 
-    return Dict(
-        "code" => formatted_code,
-        "market" => security.market,
-        "name" => s2c.name,
-        "rt_list" => rt_list
+    rt_list = [
+        (
+            time = item.time,
+            minute = item.minute,
+            is_blank = item.isBlank,
+            price = item.price,
+            last_close_price = item.lastClosePrice,
+            avg_price = item.avgPrice,
+            volume = item.volume,
+            turnover = item.turnover,
+            timestamp = item.timestamp
+        )::RTData for item in s2c.rtList
+    ]
+
+    return (
+        code = formatted_code,
+        market = security.market,
+        name = s2c.name,
+        rt_list = rt_list
     )
 end
 
-# Parse ticker push data
+# Parse ticker push data - optimized with NamedTuple
 function parse_ticker_push(resp::Qot_UpdateTicker.Response)
     s2c = resp.s2c
     security = s2c.security
@@ -377,44 +411,45 @@ function parse_ticker_push(resp::Qot_UpdateTicker.Response)
     market_label = string(QotMarket.T(security.market))
     formatted_code = string(market_label, ".", security.code)
 
-    ticker_list = []
-    for item in s2c.tickerList
+    TickerData = @NamedTuple{
+        time::String, sequence::Int64, direction::String, price::Float64,
+        volume::Int64, turnover::Float64, recv_time::String,
+        ticker_type::String, type_sign::String, timestamp::Float64
+    }
+
+    tickerList = s2c.tickerList
+    n = length(tickerList)
+    ticker_list = Vector{TickerData}(undef, n)
+
+    @inbounds for i in 1:n
+        item = tickerList[i]
         direction = item.dir == 1 ? "BUY" : item.dir == 2 ? "SELL" : "NEUTRAL"
+        ticker_type_str = string(TickerType.T(item.type))
+        type_sign_str = item.typeSign == 0 ? "" : string(Char(item.typeSign))
 
-        # 使用 TickerType 枚举解析类型
-        ticker_type_enum = TickerType.T(item.type)
-        ticker_type_str = string(ticker_type_enum)
-
-        # 将 typeSign Int32 转换为字符
-        type_sign_str = if item.typeSign == 0
-            ""
-        else
-            string(Char(item.typeSign))
-        end
-
-        push!(ticker_list, Dict(
-            "time" => item.time,
-            "sequence" => item.sequence,
-            "direction" => direction,
-            "price" => item.price,
-            "volume" => item.volume,
-            "turnover" => item.turnover,
-            "recv_time" => item.recvTime,
-            "ticker_type" => ticker_type_str,
-            "type_sign" => type_sign_str,
-            "timestamp" => item.timestamp
-        ))
+        ticker_list[i] = (
+            time = item.time,
+            sequence = item.sequence,
+            direction = direction,
+            price = item.price,
+            volume = item.volume,
+            turnover = item.turnover,
+            recv_time = item.recvTime,
+            ticker_type = ticker_type_str,
+            type_sign = type_sign_str,
+            timestamp = item.timestamp
+        )
     end
 
-    return Dict(
-        "code" => formatted_code,
-        "market" => security.market,
-        "name" => s2c.name,
-        "ticker_list" => ticker_list
+    return (
+        code = formatted_code,
+        market = security.market,
+        name = s2c.name,
+        ticker_list = ticker_list
     )
 end
 
-# Parse broker queue push data
+# Parse broker queue push data - optimized with NamedTuple
 function parse_broker_push(resp::Qot_UpdateBroker.Response)
     s2c = resp.s2c
     security = s2c.security
@@ -422,37 +457,36 @@ function parse_broker_push(resp::Qot_UpdateBroker.Response)
     market_label = string(QotMarket.T(security.market))
     formatted_code = string(market_label, ".", security.code)
 
-    ask_brokers = [Dict(
-        "broker_id" => item.id,
-        "broker_name" => item.name,
-        "broker_pos" => item.pos
-    ) for item in s2c.brokerAskList]
+    BrokerData = @NamedTuple{broker_id::Int64, broker_name::String, broker_pos::Int32}
 
-    bid_brokers = [Dict(
-        "broker_id" => item.id,
-        "broker_name" => item.name,
-        "broker_pos" => item.pos
-    ) for item in s2c.brokerBidList]
+    ask_brokers = [
+        (broker_id = item.id, broker_name = item.name, broker_pos = item.pos)::BrokerData
+        for item in s2c.brokerAskList
+    ]
 
-    # 使用当前时间作为更新时间
+    bid_brokers = [
+        (broker_id = item.id, broker_name = item.name, broker_pos = item.pos)::BrokerData
+        for item in s2c.brokerBidList
+    ]
+
     update_time = Dates.format(now(), "HH:MM:SS")
 
-    return Dict(
-        "code" => formatted_code,
-        "market" => security.market,
-        "name" => s2c.name,
-        "ask_brokers" => ask_brokers,
-        "bid_brokers" => bid_brokers,
-        "update_time" => update_time
+    return (
+        code = formatted_code,
+        market = security.market,
+        name = s2c.name,
+        ask_brokers = ask_brokers,
+        bid_brokers = bid_brokers,
+        update_time = update_time
     )
 end
 
-# Parse price reminder push data
+# Parse price reminder push data - optimized with NamedTuple
 function parse_price_reminder_push(resp::Qot_UpdatePriceReminder.Response)
     s2c = resp.s2c
     security = s2c.security
 
-    # Parse reminder type
+    # Parse reminder type using a tuple lookup for better performance
     reminder_type = s2c._type
     reminder_type_str = if reminder_type == 1
         "PRICE_UP"
@@ -498,22 +532,22 @@ function parse_price_reminder_push(resp::Qot_UpdatePriceReminder.Response)
         "UNKNOWN"
     end
 
-    return Dict(
-        "code" => security.code,
-        "name" => s2c.name,
-        "price" => s2c.price,
-        "change_rate" => s2c.changeRate,
-        "market_status" => market_status_str,
-        "content" => s2c.content,
-        "note" => s2c.note,
-        "key" => s2c.key,
-        "reminder_type" => reminder_type_str,
-        "set_value" => s2c.setValue,
-        "cur_value" => s2c.curValue
+    return (
+        code = security.code,
+        name = s2c.name,
+        price = s2c.price,
+        change_rate = s2c.changeRate,
+        market_status = market_status_str,
+        content = s2c.content,
+        note = s2c.note,
+        key = s2c.key,
+        reminder_type = reminder_type_str,
+        set_value = s2c.setValue,
+        cur_value = s2c.curValue
     )
 end
 
-# Parse order update push data (trading)
+# Parse order update push data (trading) - optimized with NamedTuple
 function parse_order_update_push(resp::Trd_UpdateOrder.Response)
     s2c = resp.s2c
     header = s2c.header
@@ -614,39 +648,36 @@ function parse_order_update_push(resp::Trd_UpdateOrder.Response)
         "UNKNOWN"
     end
 
-    return Dict(
-        # Header information
-        "acc_id" => header.accID,
-        "trd_env" => trd_env_str,
-        "trd_market" => trd_market_str,
-
-        # Order information
-        "order_id" => order.orderID,
-        "order_id_ex" => order.orderIDEx,
-        "order_type" => order_type_str,
-        "order_status" => order_status_str,
-        "trd_side" => trd_side_str,
-        "code" => order.code,
-        "name" => order.name,
-        "qty" => order.qty,
-        "price" => order.price,
-        "create_time" => order.createTime,
-        "update_time" => order.updateTime,
-        "fill_qty" => order.fillQty,
-        "fill_avg_price" => order.fillAvgPrice,
-        "last_err_msg" => order.lastErrMsg,
-        "remark" => order.remark,
-        "time_in_force" => order.timeInForce,
-        "fill_outside_rth" => order.fillOutsideRTH,
-        "aux_price" => order.auxPrice,
-        "trail_type" => order.trailType,
-        "trail_value" => order.trailValue,
-        "trail_spread" => order.trailSpread,
-        "currency" => order.currency
+    return (
+        acc_id = header.accID,
+        trd_env = trd_env_str,
+        trd_market = trd_market_str,
+        order_id = order.orderID,
+        order_id_ex = order.orderIDEx,
+        order_type = order_type_str,
+        order_status = order_status_str,
+        trd_side = trd_side_str,
+        code = order.code,
+        name = order.name,
+        qty = order.qty,
+        price = order.price,
+        create_time = order.createTime,
+        update_time = order.updateTime,
+        fill_qty = order.fillQty,
+        fill_avg_price = order.fillAvgPrice,
+        last_err_msg = order.lastErrMsg,
+        remark = order.remark,
+        time_in_force = order.timeInForce,
+        fill_outside_rth = order.fillOutsideRTH,
+        aux_price = order.auxPrice,
+        trail_type = order.trailType,
+        trail_value = order.trailValue,
+        trail_spread = order.trailSpread,
+        currency = order.currency
     )
 end
 
-# Parse order fill push data (trading)
+# Parse order fill push data (trading) - optimized with NamedTuple
 function parse_order_fill_push(resp::Trd_UpdateOrderFill.Response)
     s2c = resp.s2c
     header = s2c.header
@@ -687,33 +718,30 @@ function parse_order_fill_push(resp::Trd_UpdateOrderFill.Response)
         "UNKNOWN"
     end
 
-    return Dict(
-        # Header information
-        "acc_id" => header.accID,
-        "trd_env" => trd_env_str,
-        "trd_market" => trd_market_str,
-
-        # Fill information
-        "fill_id" => fill.fillID,
-        "fill_id_ex" => fill.fillIDEx,
-        "order_id" => fill.orderID,
-        "order_id_ex" => fill.orderIDEx,
-        "trd_side" => trd_side_str,
-        "code" => fill.code,
-        "name" => fill.name,
-        "qty" => fill.qty,
-        "price" => fill.price,
-        "create_time" => fill.createTime,
-        "counter_broker_id" => fill.counterBrokerID,
-        "counter_broker_name" => fill.counterBrokerName,
-        "sec_market" => fill.secMarket,
-        "create_timestamp" => fill.createTimestamp,
-        "update_timestamp" => fill.updateTimestamp,
-        "status" => fill.status
+    return (
+        acc_id = header.accID,
+        trd_env = trd_env_str,
+        trd_market = trd_market_str,
+        fill_id = fill.fillID,
+        fill_id_ex = fill.fillIDEx,
+        order_id = fill.orderID,
+        order_id_ex = fill.orderIDEx,
+        trd_side = trd_side_str,
+        code = fill.code,
+        name = fill.name,
+        qty = fill.qty,
+        price = fill.price,
+        create_time = fill.createTime,
+        counter_broker_id = fill.counterBrokerID,
+        counter_broker_name = fill.counterBrokerName,
+        sec_market = fill.secMarket,
+        create_timestamp = fill.createTimestamp,
+        update_timestamp = fill.updateTimestamp,
+        status = fill.status
     )
 end
 
-# Parse deals push message (order fill push)
+# Parse deals push message (order fill push) - optimized with NamedTuple
 function parse_deals_push(resp::Trd_UpdateOrderFill.Response)
     s2c = resp.s2c
     header = s2c.header
@@ -778,26 +806,26 @@ function parse_deals_push(resp::Trd_UpdateOrderFill.Response)
         "UNKNOWN"
     end
 
-    return Dict(
-        "acc_id" => header.accID,
-        "trd_env" => trd_env,
-        "trd_market" => trd_market,
-        "fill_id" => fill.fillID,
-        "fill_id_ex" => fill.fillIDEx,
-        "order_id" => fill.orderID,
-        "order_id_ex" => fill.orderIDEx,
-        "code" => fill.code,
-        "name" => fill.name,
-        "trd_side" => trd_side,
-        "qty" => fill.qty,
-        "price" => fill.price,
-        "create_time" => fill.createTime,
-        "counter_broker_id" => fill.counterBrokerID,
-        "counter_broker_name" => fill.counterBrokerName,
-        "sec_market" => sec_market,
-        "create_timestamp" => fill.createTimestamp,
-        "update_timestamp" => fill.updateTimestamp,
-        "status" => status
+    return (
+        acc_id = header.accID,
+        trd_env = trd_env,
+        trd_market = trd_market,
+        fill_id = fill.fillID,
+        fill_id_ex = fill.fillIDEx,
+        order_id = fill.orderID,
+        order_id_ex = fill.orderIDEx,
+        code = fill.code,
+        name = fill.name,
+        trd_side = trd_side,
+        qty = fill.qty,
+        price = fill.price,
+        create_time = fill.createTime,
+        counter_broker_id = fill.counterBrokerID,
+        counter_broker_name = fill.counterBrokerName,
+        sec_market = sec_market,
+        create_timestamp = fill.createTimestamp,
+        update_timestamp = fill.updateTimestamp,
+        status = status
     )
 end
 

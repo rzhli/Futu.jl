@@ -89,13 +89,10 @@ function get_user_security_group(client::OpenDClient; group_type::GroupType.T = 
     # Parse response
     data = resp.s2c.groupList
 
-    rows = NamedTuple[]
-
-    for item in data
-        # Convert group type enum to string
+    # Use map for type stability
+    rows = map(data) do item
         group_type_str = string(Qot_GetUserSecurityGroup.GroupType.T(item.groupType))
-
-        push!(rows, (group_name = item.groupName, group_type = group_type_str))
+        (group_name = item.groupName, group_type = group_type_str)
     end
 
     return DataFrame(rows)
@@ -150,9 +147,8 @@ function get_user_security(client::OpenDClient, group_name::String)
     # Parse response
     data = resp.s2c.staticInfoList
 
-    rows = NamedTuple[]
-
-    for item in data
+    # Use map for type stability
+    rows = map(data) do item
         basic = item.basic
         security = basic.security
 
@@ -166,7 +162,7 @@ function get_user_security(client::OpenDClient, group_name::String)
             string(ExchType.T(basic.exchType))
         end
 
-        push!(rows, (
+        (
             code = security.code,
             name = basic.name,
             market = security.market,
@@ -175,7 +171,7 @@ function get_user_security(client::OpenDClient, group_name::String)
             listing_date = basic.listTime,
             stock_id = Int64(basic.id),
             exchange_type = exchange_type_str,
-            delist_flag = hasproperty(basic, :delisting) ? basic.delisting : false)
+            delist_flag = hasproperty(basic, :delisting) ? basic.delisting : false
         )
     end
 
@@ -369,15 +365,12 @@ function get_price_reminder(client::OpenDClient, code::Union{String, Nothing} = 
     # Parse response
     data = resp.s2c.priceReminderList
 
-    rows = NamedTuple[]
-
-    # Parse the response according to official documentation structure
-    for reminder_item in data
+    # Use Iterators.flatten for nested structure - type stable
+    rows = collect(Iterators.flatten(map(data) do reminder_item
         security = reminder_item.security
         security_name = reminder_item.name
-        item_list = reminder_item.itemList
 
-        for item in item_list
+        map(reminder_item.itemList) do item
             # Convert reminder type enum to string
             reminder_type_str = string(PriceReminderType.T(item.type))
 
@@ -387,7 +380,7 @@ function get_price_reminder(client::OpenDClient, code::Union{String, Nothing} = 
             # Convert reminder session list to string array
             session_strs = [string(PriceReminderMarketStatus.T(s)) for s in item.reminderSessionList]
 
-            push!(rows, (
+            (
                 key = Int64(item.key),
                 code = security.code,
                 name = security_name,
@@ -396,10 +389,10 @@ function get_price_reminder(client::OpenDClient, code::Union{String, Nothing} = 
                 is_enable = item.isEnable,
                 note = item.note,
                 freq = freq_str,
-                reminder_sessions = session_strs)
+                reminder_sessions = session_strs
             )
         end
-    end
+    end))
 
     return DataFrame(rows)
 end
